@@ -14,6 +14,7 @@ app.use(
   })
 );
 
+// MongoDB Credentials
 const { MongoClient, ServerApiVersion } = require("mongodb");
 
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.5e8b5ac.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
@@ -26,13 +27,32 @@ const client = new MongoClient(uri, {
   },
 });
 
+// ****Server-side token verification****
+app.post("/verify-token", (req, res) => {
+  const token = req.headers["authorization"]?.split(" ")[1];
+
+  if (!token) {
+    return res
+      .status(401)
+      .send({ success: false, message: "No token provided" });
+  }
+
+  jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, (err, decoded) => {
+    if (err) {
+      return res.status(401).send({ success: false, message: "Invalid token" });
+    }
+
+    res.send({ success: true });
+  });
+});
+
 async function run() {
   try {
     // Connect the client to the server	(optional starting in v4.7)
     await client.connect();
     const UserCollections = client.db("FriendZoneDB").collection("allUsers");
 
-    // Register new user
+    // ******Register new user****
     app.post("/register", async (req, res) => {
       const { name, email, password } = req.body;
 
@@ -42,6 +62,13 @@ async function run() {
         return res
           .status(400)
           .send({ success: false, message: "User already exists" });
+      }
+
+      const existingUserByName = await UserCollections.findOne({ name });
+      if (existingUserByName) {
+        return res
+          .status(400)
+          .send({ success: false, message: "Name already in use" });
       }
       // Hash the password
       const hashedPassword = await bcrypt.hash(password, 10);
@@ -58,7 +85,7 @@ async function run() {
       res.send(result);
     });
 
-    // User Login
+    // ****User Login****
     app.post("/login", async (req, res) => {
       const { email, password } = req.body;
 
