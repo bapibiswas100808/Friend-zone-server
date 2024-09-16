@@ -133,7 +133,7 @@ async function run() {
       }
     });
 
-    // **** Fetch all users ****
+    // **** Fetch all users except logged in user ****
     app.get("/users", async (req, res) => {
       const { search, excludeUserId } = req.query;
 
@@ -210,6 +210,175 @@ async function run() {
         res.status(201).json({ message: "Friend request sent successfully" });
       } catch (error) {
         console.error("Error sending friend request:", error);
+        res.status(500).json({ message: "Internal server error" });
+      }
+    });
+
+    // ***Get Friend requests****
+    app.get("/friend-requests", async (req, res) => {
+      const userId = req.query.userId;
+
+      try {
+        if (!userId || !ObjectId.isValid(userId)) {
+          return res
+            .status(400)
+            .json({ message: "Invalid or missing user ID" });
+        }
+
+        // Fetch friend requests where the user is the recipient
+        const friendRequests = await FriendRequestsCollection.aggregate([
+          {
+            $match: { recipientId: new ObjectId(userId) },
+          },
+          {
+            $lookup: {
+              from: "allUsers",
+              localField: "senderId",
+              foreignField: "_id",
+              as: "senderDetails",
+            },
+          },
+          {
+            $unwind: "$senderDetails",
+          },
+        ]).toArray();
+
+        res.status(200).json(friendRequests);
+      } catch (error) {
+        console.error("Error fetching friend requests:", error);
+        res.status(500).json({ message: "Internal server error" });
+      }
+    });
+
+    // ***Accept Friend Request****
+    app.post("/accept-friend-request", async (req, res) => {
+      const { requestId, userId } = req.body;
+
+      try {
+        if (!requestId || !userId) {
+          return res
+            .status(400)
+            .json({ message: "Missing request ID or user ID" });
+        }
+
+        // Fetch the friend request
+        const friendRequest = await FriendRequestsCollection.findOne({
+          _id: new ObjectId(requestId),
+        });
+        if (!friendRequest) {
+          return res.status(404).json({ message: "Friend request not found" });
+        }
+
+        // Add sender to the recipient's friends list
+        await UserCollections.updateOne(
+          { _id: new ObjectId(friendRequest.recipientId) },
+          { $push: { friends: new ObjectId(friendRequest.senderId) } }
+        );
+
+        // Add recipient to the sender's friends list
+        await UserCollections.updateOne(
+          { _id: new ObjectId(friendRequest.senderId) },
+          { $push: { friends: new ObjectId(friendRequest.recipientId) } }
+        );
+
+        // Remove the friend request from both users' pending requests
+        await FriendRequestsCollection.deleteOne({
+          _id: new ObjectId(requestId),
+        });
+
+        res.status(200).json({ message: "Friend request accepted" });
+      } catch (error) {
+        console.error("Error accepting friend request:", error);
+        res.status(500).json({ message: "Internal server error" });
+      }
+    });
+
+    // ***Reject Friend Request****
+    app.post("/reject-friend-request", async (req, res) => {
+      const { requestId, userId } = req.body;
+
+      try {
+        if (!requestId || !userId) {
+          return res
+            .status(400)
+            .json({ message: "Missing request ID or user ID" });
+        }
+
+        // Fetch the friend request
+        const friendRequest = await FriendRequestsCollection.findOne({
+          _id: new ObjectId(requestId),
+        });
+        if (!friendRequest) {
+          return res.status(404).json({ message: "Friend request not found" });
+        }
+
+        // Remove the friend request
+        await FriendRequestsCollection.deleteOne({
+          _id: new ObjectId(requestId),
+        });
+
+        res.status(200).json({ message: "Friend request rejected" });
+      } catch (error) {
+        console.error("Error rejecting friend request:", error);
+        res.status(500).json({ message: "Internal server error" });
+      }
+    });
+
+    // ****Fetch friends for the logged-in user****
+    app.get("/friends", async (req, res) => {
+      const userId = req.query.userId;
+
+      try {
+        if (!userId || !ObjectId.isValid(userId)) {
+          return res
+            .status(400)
+            .json({ message: "Invalid or missing user ID" });
+        }
+
+        const user = await UserCollections.findOne({
+          _id: new ObjectId(userId),
+        });
+        if (!user) {
+          return res.status(404).json({ message: "User not found" });
+        }
+
+        const friends = await UserCollections.find({
+          _id: { $in: user.friends.map((id) => new ObjectId(id)) },
+        }).toArray();
+
+        res.send(friends);
+      } catch (error) {
+        console.error("Error fetching friends:", error);
+        res.status(500).json({ message: "Internal server error" });
+      }
+    });
+
+    // ****Unfriend a user****
+    app.post("/unfriend", async (req, res) => {
+      const { userId, friendId } = req.body;
+
+      try {
+        if (!userId || !friendId) {
+          return res
+            .status(400)
+            .json({ message: "Missing user ID or friend ID" });
+        }
+
+        // Remove friend from the user's friends list
+        await UserCollections.updateOne(
+          { _id: new ObjectId(userId) },
+          { $pull: { friends: new ObjectId(friendId) } }
+        );
+
+        // Remove user from the friend's friends list
+        await UserCollections.updateOne(
+          { _id: new ObjectId(friendId) },
+          { $pull: { friends: new ObjectId(userId) } }
+        );
+
+        res.status(200).json({ message: "User unfriended" });
+      } catch (error) {
+        console.error("Error unfriending user:", error);
         res.status(500).json({ message: "Internal server error" });
       }
     });
