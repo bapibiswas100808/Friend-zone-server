@@ -10,7 +10,11 @@ app.use(express.json());
 
 app.use(
   cors({
-    origin: ["http://localhost:5173", "http://localhost:5174"],
+    origin: [
+      "http://localhost:5173",
+      "http://localhost:5174",
+      "https://friend-zone-app.netlify.app",
+    ],
   })
 );
 
@@ -49,8 +53,9 @@ app.post("/verify-token", (req, res) => {
 async function run() {
   try {
     // Connect the client to the server	(optional starting in v4.7)
-    await client.connect();
-    // Database Collections
+    // await client.connect();
+
+    //*** Database Collections***
     const UserCollections = client.db("FriendZoneDB").collection("allUsers");
     const FriendRequestsCollection = client
       .db("FriendZoneDB")
@@ -383,11 +388,71 @@ async function run() {
       }
     });
 
+    // ****Recommended friends****
+    app.get("/all-users-with-mutual-friends", async (req, res) => {
+      const userId = req.query.userId;
+
+      try {
+        // Find the current user
+        const currentUser = await UserCollections.findOne({
+          _id: new ObjectId(userId),
+        });
+
+        if (!currentUser) {
+          return res.status(404).json({ message: "User not found" });
+        }
+
+        const { friends: currentUserFriends } = currentUser;
+
+        // Find all users except the logged-in user and return mutual friends
+        const allUsersWithMutualFriends = await UserCollections.aggregate([
+          {
+            $match: {
+              _id: { $ne: new ObjectId(userId) },
+            },
+          },
+          {
+            $addFields: {
+              mutualFriends: {
+                $filter: {
+                  input: "$friends",
+                  as: "friendId",
+                  cond: { $in: ["$$friendId", currentUserFriends] },
+                },
+              },
+            },
+          },
+          {
+            $lookup: {
+              from: "allUsers",
+              localField: "mutualFriends",
+              foreignField: "_id",
+              as: "mutualFriendsDetails",
+            },
+          },
+          {
+            $project: {
+              name: 1,
+              email: 1,
+              mutualFriendsDetails: {
+                name: 1,
+              },
+            },
+          },
+        ]).toArray();
+
+        res.status(200).json(allUsersWithMutualFriends);
+      } catch (error) {
+        console.error("Error fetching users with mutual friends:", error);
+        res.status(500).json({ message: "Internal server error" });
+      }
+    });
+
     // Send a ping to confirm a successful connection
-    await client.db("admin").command({ ping: 1 });
-    console.log(
-      "Pinged your deployment. You successfully connected to MongoDB!"
-    );
+    // await client.db("admin").command({ ping: 1 });
+    // console.log(
+    //   "Pinged your deployment. You successfully connected to MongoDB!"
+    // );
   } finally {
     // Ensures that the client will close when you finish/error
     // await client.close();
